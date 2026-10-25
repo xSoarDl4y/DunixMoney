@@ -1,0 +1,9 @@
+{
+  "name": "MONEYFLOW",
+  "short_name": "Moneyflow",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b0e13",
+  "theme_color": "#0b0e13",
+  "description": "Quản lý tài chính cá nhân"
+}
