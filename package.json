@@ -7,7 +7,11 @@
     "dev:web": "pnpm --filter @moneyflow/web dev",
     "dev:mobile": "pnpm --filter @moneyflow/mobile start",
     "dev:api": "pnpm --filter @moneyflow/api start:dev",
-    "build:web": "pnpm --filter @moneyflow/web build"
+    "build:web": "pnpm --filter @moneyflow/web build",
+    "build:api": "pnpm --filter @moneyflow/api build",
+    "db:generate": "pnpm --filter @moneyflow/api db:generate",
+    "db:migrate": "pnpm --filter @moneyflow/api db:migrate",
+    "db:studio": "pnpm --filter @moneyflow/api db:studio"
   },
   "devDependencies": {
     "typescript": "^5.7.3"

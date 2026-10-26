@@ -1,31 +1,14 @@
-# Dependencies
 node_modules/
-
-# Next.js
 .next/
-out/
-
-# Expo
 .expo/
-
-# Build output
 dist/
 build/
 coverage/
-
-# Environment variables and secrets
 .env
 .env.*
 !.env.example
-
-# Logs
-npm-debug.log*
-pnpm-debug.log*
-yarn-debug.log*
-
-# Operating system
+apps/api/prisma/*.db
+*.log
 .DS_Store
 Thumbs.db
-
-# Editor
 .vscode/

@@ -1,23 +1,29 @@
 import { Controller, Get } from "@nestjs/common";
+import { PrismaService } from "./prisma.service";
 
 @Controller()
 export class AppController {
+  constructor(private readonly prisma: PrismaService) {}
+
+  // Kiểm tra API có hoạt động hay không
   @Get("health")
   health() {
     return {
       service: "MONEYFLOW API",
       status: "ok",
-      stage: "scaffold",
-      message: "API đang hoạt động. Chưa kết nối database hoặc xác thực production."
+      version: "0.2.0",
+      timestamp: new Date().toISOString(),
     };
   }
 
-  @Get("features")
-  features() {
+  // Kiểm tra kết nối cơ sở dữ liệu
+  @Get("ready")
+  async ready() {
+    await this.prisma.$queryRaw`SELECT 1`;
+
     return {
-      coreModules: ["dashboard", "transactions", "reports", "debts", "budgets", "wallets"],
-      implemented: false,
-      note: "Đây là danh sách module định hướng, không phải các API nghiệp vụ đã hoàn thiện."
+      status: "ready",
+      database: "connected",
     };
   }
 }

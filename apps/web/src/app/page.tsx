@@ -3,14 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Wallet, TrendingUp, TrendingDown, CircleDollarSign, LayoutDashboard, ReceiptText, ChartNoAxesCombined, BellRing, Plus, Search, ArrowDownLeft, ArrowUpRight, Menu, X, PiggyBank, CreditCard, ChevronDown } from "lucide-react";
 import { formatVND, getSummary, type Transaction } from "@moneyflow/finance-core";
+import { apiRequest, type ApiTransaction } from "@/lib/api";
 
-const initial: Transaction[] = [
-  {id:"t1", title:"Lương tháng", amount:18000000, type:"income", category:"Lương", date:new Date().toISOString().slice(0,10)},
-  {id:"t2", title:"Ăn uống & cà phê", amount:85000, type:"expense", category:"Ăn uống", date:new Date().toISOString().slice(0,10)},
-  {id:"t3", title:"Thanh toán Internet", amount:220000, type:"expense", category:"Hóa đơn", date:new Date().toISOString().slice(0,10)},
-  {id:"t4", title:"Đi siêu thị", amount:465000, type:"expense", category:"Mua sắm", date:new Date().toISOString().slice(0,10)},
-  {id:"t5", title:"Freelance", amount:1250000, type:"income", category:"Làm thêm", date:new Date().toISOString().slice(0,10)}
-];
+
 const nav = [
   {name:"Tổng quan", icon:LayoutDashboard},
   {name:"Lịch sử giao dịch", icon:ReceiptText},
@@ -20,7 +15,14 @@ const nav = [
 const categories = ["Ăn uống","Di chuyển","Nhà ở","Hóa đơn","Mua sắm","Giải trí","Sức khỏe","Lương","Làm thêm","Khác"];
 
 export default function Home() {
-  const [items,setItems] = useState<Transaction[]>(initial);
+  const [items,setItems] = useState<Transaction[]>([]);
+  const [token,setToken] = useState("");
+  const [user,setUser] = useState<{id:string;name:string;email:string}|null>(null);
+  const [authMode,setAuthMode] = useState<"login"|"register">("login");
+  const [authForm,setAuthForm] = useState({name:"",email:"",password:""});
+  const [authError,setAuthError] = useState("");
+  const [formError,setFormError] = useState("");
+  const [authBusy,setAuthBusy] = useState(false);
   const [loaded,setLoaded] = useState(false);
   const [active,setActive] = useState("Tổng quan");
   const [query,setQuery] = useState("");
@@ -30,11 +32,45 @@ export default function Home() {
   const [form,setForm] = useState({title:"",amount:"",type:"expense" as "income"|"expense",category:"Ăn uống",date:new Date().toISOString().slice(0,10),note:""});
 
   useEffect(() => {
-    try { const saved = localStorage.getItem("moneyflow-transactions"); if(saved) setItems(JSON.parse(saved)); }
-    catch {}
-    setLoaded(true);
+    const savedToken = localStorage.getItem("moneyflow-token");
+    if (!savedToken) { setLoaded(true); return; }
+    setToken(savedToken);
+    Promise.all([
+      apiRequest<{id:string;name:string;email:string}>("/auth/me", {}, savedToken),
+      apiRequest<ApiTransaction[]>("/transactions", {}, savedToken),
+    ]).then(([profile, rows]) => {
+      setUser(profile);
+      setItems(rows.map((t) => ({ ...t, amount: Number(t.amount), date: String(t.date).slice(0,10), note: t.note || undefined })));
+    }).catch(() => { localStorage.removeItem("moneyflow-token"); setToken(""); setUser(null); setAuthError("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại."); })
+      .finally(() => setLoaded(true));
   }, []);
-  useEffect(() => { if(loaded) localStorage.setItem("moneyflow-transactions",JSON.stringify(items)); },[items,loaded]);
+
+  async function submitAuth(e: React.FormEvent) {
+    e.preventDefault(); setAuthError(""); setAuthBusy(true);
+    try {
+      const payload =
+  authMode === "login"
+    ? {
+        email: authForm.email,
+        password: authForm.password,
+      }
+    : authForm;
+
+const result = await apiRequest<{
+  accessToken: string;
+  user: { id: string; name: string; email: string };
+}>(`/auth/${authMode}`, {
+  method: "POST",
+  body: JSON.stringify(payload),
+});
+      localStorage.setItem("moneyflow-token", result.accessToken); setToken(result.accessToken); setUser(result.user);
+      const rows = await apiRequest<ApiTransaction[]>("/transactions", {}, result.accessToken);
+      setItems(rows.map((t) => ({ ...t, amount:Number(t.amount), date:String(t.date).slice(0,10), note:t.note || undefined })));
+    } catch (err) { setAuthError(err instanceof Error ? err.message : "Không thể kết nối máy chủ."); }
+    finally { setAuthBusy(false); setLoaded(true); }
+  }
+
+  function logout() { localStorage.removeItem("moneyflow-token"); setToken(""); setUser(null); setItems([]); setAuthForm({name:"",email:"",password:""}); }
 
   const summary = useMemo(() => getSummary(items),[items]);
   const visible = useMemo(() => items.filter(t => (filter==="all" || t.type===filter) && `${t.title} ${t.category} ${t.note||""}`.toLowerCase().includes(query.toLowerCase())).sort((a,b)=>b.date.localeCompare(a.date)),[items,filter,query]);
@@ -44,19 +80,23 @@ export default function Home() {
     return Object.entries(out).sort((a,b)=>b[1]-a[1]).slice(0,5);
   },[items]);
   const expenseTotal = expenseByCategory.reduce((s,x)=>s+x[1],0);
-  function submit(e: React.FormEvent) {
-    e.preventDefault();
+  async function submit(e: React.FormEvent) {
+    e.preventDefault(); setFormError("");
     const amount = Math.round(Number(form.amount));
-    if(!form.title.trim() || !Number.isFinite(amount) || amount<=0) return;
-    setItems(old=>[{...form,id:crypto.randomUUID(),amount,title:form.title.trim()},...old]);
-    setForm({...form,title:"",amount:"",note:""});
-    setModal(false);
+    if(!form.title.trim() || !Number.isFinite(amount) || amount<=0 || !token) return;
+    try {
+      const created = await apiRequest<ApiTransaction>("/transactions", { method:"POST", body:JSON.stringify({ title:form.title.trim(), amount, type:form.type, category:form.category, date:form.date, note:form.note }) }, token);
+      setItems(old=>[{...created, id:created.id, amount:Number(created.amount), date:String(created.date).slice(0,10), note:created.note || undefined},...old]);
+      setForm({...form,title:"",amount:"",note:""}); setModal(false);
+    } catch (err) { setFormError(err instanceof Error ? err.message : "Không thể lưu giao dịch."); }
   }
   const greeting = new Date().getHours()<12 ? "Chào buổi sáng" : new Date().getHours()<18 ? "Chào buổi chiều" : "Chào buổi tối";
 
+  if (!loaded) return <div className="auth-screen"><div className="auth-card"><div className="brand-mark"><Wallet size={22}/></div><h1>MONEYFLOW</h1><p>Đang kết nối tài khoản và tải dữ liệu...</p></div></div>;
+  if (!token || !user) return <div className="auth-screen"><form className="auth-card" onSubmit={submitAuth}><div className="brand-mark"><Wallet size={22}/></div><div className="eyebrow">PERSONAL FINANCE</div><h1>{authMode === "login" ? "Chào mừng trở lại" : "Tạo tài khoản MONEYFLOW"}</h1><p>Dữ liệu tài chính được lưu theo tài khoản của bạn.</p>{authMode === "register" && <label>Họ và tên<input required minLength={2} maxLength={80} value={authForm.name} onChange={e=>setAuthForm({...authForm,name:e.target.value})} placeholder="Tên của bạn"/></label>}<label>Email<input type="email" required maxLength={254} autoComplete="email" value={authForm.email} onChange={e=>setAuthForm({...authForm,email:e.target.value})} placeholder="ban@example.com"/></label><label>Mật khẩu<input type="password" required minLength={8} maxLength={72} autoComplete={authMode === "login" ? "current-password" : "new-password"} value={authForm.password} onChange={e=>setAuthForm({...authForm,password:e.target.value})} placeholder="Ít nhất 8 ký tự"/></label>{authError && <div className="auth-error">{authError}</div>}<button className="primary-btn auth-submit" type="submit" disabled={authBusy}>{authBusy ? "Đang xử lý..." : authMode === "login" ? "Đăng nhập" : "Tạo tài khoản"}</button><button className="auth-switch" type="button" onClick={()=>{setAuthMode(authMode === "login" ? "register" : "login");setAuthError("")}}>{authMode === "login" ? "Chưa có tài khoản? Đăng ký" : "Đã có tài khoản? Đăng nhập"}</button><small>API: localhost:4000 · Cần chạy backend và PostgreSQL</small></form></div>;
   return <div className="app-shell">
     <aside className={`sidebar ${mobileNav?"sidebar-open":""}`}>
-      <div className="brand"><div className="brand-mark"><Wallet size={22}/></div><div><b>DUNIX-MONEY</b><small>PERSONAL FINANCE</small></div><button className="icon-btn close-nav" onClick={()=>setMobileNav(false)}><X size={18}/></button></div>
+      <div className="brand"><div className="brand-mark"><Wallet size={22}/></div><div><b>MONEYFLOW</b><small>PERSONAL FINANCE</small></div><button className="icon-btn close-nav" onClick={()=>setMobileNav(false)}><X size={18}/></button></div>
       <div className="workspace-label">KHÔNG GIAN CỦA BẠN</div>
       <nav>{nav.map(n=><button key={n.name} className={`nav-item ${active===n.name?"active":""}`} onClick={()=>{setActive(n.name);setMobileNav(false)}}><n.icon size={18}/><span>{n.name}</span>{n.name==="Nhắc nợ"&&<i className="nav-dot"/>}</button>)}</nav>
       <div className="sidebar-divider"/>
@@ -64,7 +104,7 @@ export default function Home() {
       <button className="nav-item" onClick={()=>setActive("Ngân sách")}><PiggyBank size={18}/><span>Ngân sách</span></button>
       <button className="nav-item" onClick={()=>setActive("Ví tiền")}><Wallet size={18}/><span>Ví tiền</span></button>
       <button className="nav-item" onClick={()=>setActive("Khoản vay")}><CreditCard size={18}/><span>Khoản vay</span></button>
-      <div className="sidebar-bottom"><div className="help-card"><div className="help-icon">✦</div><b>Kiểm soát tiền bạc</b><p>Mỗi khoản chi nhỏ đều tạo nên khác biệt lớn.</p></div><div className="profile"><div className="avatar">MF</div><div className="profile-text"><b>Tài khoản cá nhân</b><span>Bản dùng thử</span></div><ChevronDown size={16}/></div></div>
+      <div className="sidebar-bottom"><div className="help-card"><div className="help-icon">✦</div><b>Kiểm soát tiền bạc</b><p>Mỗi khoản chi nhỏ đều tạo nên khác biệt lớn.</p></div><div className="profile"><div className="avatar">MF</div><div className="profile-text"><b>{user.name}</b><span>{user.email}</span></div><button className="auth-logout" onClick={logout} title="Đăng xuất">Thoát</button></div></div>
     </aside>
     {mobileNav&&<button className="scrim" onClick={()=>setMobileNav(false)} aria-label="Đóng menu"/>}
     <main className="main-area">
@@ -91,6 +131,6 @@ export default function Home() {
         <footer className="footer"><span>© 2026 MONEYFLOW</span><span>Quản lý tài chính, rõ ràng hơn mỗi ngày.</span><span className="footer-status"><i/> Bản MVP</span></footer>
       </div>
     </main>
-    {modal&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setModal(false)}}><form className="transaction-modal" onSubmit={submit}><div className="modal-heading"><div><span className="eyebrow">GHI NHẬN DÒNG TIỀN</span><h2>Thêm giao dịch</h2></div><button type="button" className="icon-btn" onClick={()=>setModal(false)}><X size={19}/></button></div><div className="type-switch"><button type="button" className={form.type==="expense"?"selected expense-tab":""} onClick={()=>setForm({...form,type:"expense",category:"Ăn uống"})}><ArrowUpRight size={16}/> Chi tiêu</button><button type="button" className={form.type==="income"?"selected income-tab":""} onClick={()=>setForm({...form,type:"income",category:"Lương"})}><ArrowDownLeft size={16}/> Thu nhập</button></div><label>Số tiền (VNĐ)<input autoFocus type="number" min="1" step="1" required placeholder="Ví dụ: 150000" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})}/></label><label>Tên giao dịch<input required maxLength={100} placeholder="Ví dụ: Ăn trưa" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/></label><div className="form-row"><label>Danh mục<select value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>{categories.filter(c=>form.type==="income"?["Lương","Làm thêm","Khác"].includes(c):!["Lương","Làm thêm"].includes(c)).map(c=><option key={c}>{c}</option>)}</select></label><label>Ngày<input type="date" required value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label></div><label>Ghi chú (không bắt buộc)<textarea rows={2} placeholder="Thêm ghi chú..." value={form.note} onChange={e=>setForm({...form,note:e.target.value})}/></label><div className="modal-actions"><button type="button" className="secondary-btn" onClick={()=>setModal(false)}>Hủy</button><button className="primary-btn" type="submit"><Plus size={17}/> Lưu giao dịch</button></div></form></div>}
+    {modal&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setModal(false)}}><form className="transaction-modal" onSubmit={submit}><div className="modal-heading"><div><span className="eyebrow">GHI NHẬN DÒNG TIỀN</span><h2>Thêm giao dịch</h2></div><button type="button" className="icon-btn" onClick={()=>setModal(false)}><X size={19}/></button></div><div className="type-switch"><button type="button" className={form.type==="expense"?"selected expense-tab":""} onClick={()=>setForm({...form,type:"expense",category:"Ăn uống"})}><ArrowUpRight size={16}/> Chi tiêu</button><button type="button" className={form.type==="income"?"selected income-tab":""} onClick={()=>setForm({...form,type:"income",category:"Lương"})}><ArrowDownLeft size={16}/> Thu nhập</button></div><label>Số tiền (VNĐ)<input autoFocus type="number" min="1" step="1" required placeholder="Ví dụ: 150000" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})}/></label><label>Tên giao dịch<input required maxLength={100} placeholder="Ví dụ: Ăn trưa" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/></label><div className="form-row"><label>Danh mục<select value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>{categories.filter(c=>form.type==="income"?["Lương","Làm thêm","Khác"].includes(c):!["Lương","Làm thêm"].includes(c)).map(c=><option key={c}>{c}</option>)}</select></label><label>Ngày<input type="date" required value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></label></div><label>Ghi chú (không bắt buộc)<textarea rows={2} placeholder="Thêm ghi chú..." value={form.note} onChange={e=>setForm({...form,note:e.target.value})}/></label>{formError && <div className="auth-error">{formError}</div>}<div className="modal-actions"><button type="button" className="secondary-btn" onClick={()=>setModal(false)}>Hủy</button><button className="primary-btn" type="submit"><Plus size={17}/> Lưu giao dịch</button></div></form></div>}
   </div>;
 }

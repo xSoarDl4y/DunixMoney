@@ -1,0 +1,27 @@
+name: MONEYFLOW checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  build:
+    env:
+      DATABASE_URL: postgresql://moneyflow:moneyflow@localhost:5432/moneyflow?schema=public
+      JWT_SECRET: ci-only-secret-not-for-production-change-this
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm --filter @moneyflow/api db:generate
+      - run: pnpm --filter @moneyflow/api build
+      - run: pnpm --filter @moneyflow/web build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:4000/api/v1
