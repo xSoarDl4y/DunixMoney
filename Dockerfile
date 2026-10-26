@@ -17,4 +17,4 @@ ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /app /app
 EXPOSE 4000
-CMD ["pnpm", "--filter", "@moneyflow/api", "start:prod"]
+CMD ["pnpm", "--filter", "@moneyflow/api", "start"]
